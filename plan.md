@@ -1,71 +1,91 @@
-# Digital Assistant App Plan
+# Digital Assistant App Plan (Updated: January 15, 2026 - Added Stock Features)
 
 ## Requirements
 
 The Digital Assistant app must support the following features:
 
-1. **Voice/Text Input**: Accept voice input via microphone using ElevenLabs STT, and text input via a chat interface.
+1. **Voice/Text Input**: Accept voice input via microphone using ElevenLabs STT (or Deepgram as alternative for better Thai), and text input via a chat interface.
 2. **Reminders with Google Calendar Integration**: Allow users to create, view, update, and delete reminders/events synced with Google Calendar.
 3. **Conversational Form Filling**: Guide users through filling forms (e.g., appointments, surveys) via natural language conversation.
-4. **Thai Language Support**: Handle Thai language in speech recognition, text-to-speech, and text processing.
-5. **Technology Stack**: Use Pipecat framework for agent logic, ElevenLabs for STT/TTS, and Grok Voice API for AI-driven responses.
+4. **Thai Language Support**: Handle Thai language in speech recognition, text-to-speech, and text processing (optimize for tonal language).
+5. **Stock Portfolio Checking**: 
+   - ผู้ใช้สามารถถามเช็คหุ้นในพอร์ตส่วนตัว (portfolio ของ user นั้น ๆ) เช่น "เช็คพอร์ตวันนี้" หรือ "PTT ในพอร์ตฉันราคาเท่าไหร่"
+   - ดึงข้อมูลราคาปัจจุบัน, จำนวนหุ้น, gain/loss, มูลค่ารวม (ต้องเก็บพอร์ตใน DB หรือ link กับ broker)
+6. **Stock News Alerts**:
+   - ผู้ใช้กำหนด watchlist หุ้นที่สนใจ (e.g. "เตือนข่าว PTT, BANPU และหุ้นพลังงาน")
+   - เตือนข่าวสำคัญแบบ proactive (voice/push/text) เมื่อมีข่าวเกี่ยวข้องหรือหุ้นในหมวดคล้ายกัน (e.g. energy sector)
+   - Summarize ข่าว + relevance ด้วย Grok
+7. **Technology Stack**: Use Pipecat framework for agent logic, ElevenLabs/Deepgram for STT/TTS, Grok API/Voice for AI-driven responses, **LiveKit** as real-time transport layer.
 
 Additional requirements:
-- Real-time interaction
+- Real-time interaction with low latency (<500ms E2E ideal)
+- Natural interruptions/barge-in support
 - User authentication
-- Data persistence
+- Data persistence (รวมพอร์ตหุ้น + watchlist)
 - Error handling and fallback
 - Responsive web interface
 
 ## Tech Stack
 
-- **Programming Language**: Python 3.9+
+- **Programming Language**: Python 3.10+
 - **Backend Framework**: FastAPI for RESTful API and WebSocket support
 - **Voice Agent Framework**: Pipecat for building conversational voice agents
-- **Speech Services**: ElevenLabs API for Speech-to-Text (STT) and Text-to-Speech (TTS)
-- **AI Service**: Grok API for text-based AI responses, Grok Voice API for voice responses
+- **Real-time Transport**: **LiveKit** (open-source WebRTC SFU, audio-only mode)
+- **Speech Services**: 
+  - STT: ElevenLabs (primary) หรือ Deepgram (alternative — รองรับไทยดีมาก + streaming)
+  - TTS: ElevenLabs (Thai voices)
+- **AI Service**: Grok API for text-based responses, Grok Voice API (ถ้ามี) หรือ fallback ไป ElevenLabs TTS
 - **Calendar Integration**: Google Calendar API v3
-- **Frontend**: React.js for web interface with voice controls
-- **Database**: PostgreSQL for user data and session storage (SQLite for development)
-- **Authentication**: OAuth 2.0 with Google for user login and calendar access
-- **Hosting/Deployment**: Docker for containerization, AWS/GCP for cloud hosting
+- **Stock Integration** (NEW):
+  - **thaistock** (UncleEngineer) — สำหรับ prototype: real-time price + historical (web scraping settrade.com, ฟรี ง่าย)
+  - **Settrade Open API** (official) — สำหรับ production: real-time quotes, portfolio/account info (ต้อง OAuth/login กับ broker เช่น Pi Securities), news feed
+  - Alternative: SMART Marketplace API จาก SET (delayed/real-time market data)
+  - News: RSS from SET + Grok summarize หรือ web search
+- **Frontend**: React.js for web interface with voice controls (WebRTC via LiveKit client SDK)
+- **Database**: PostgreSQL for user data, sessions, stock portfolios, watchlists (SQLite for development)
+- **Authentication**: OAuth 2.0 with Google (calendar) + Broker OAuth for Settrade (stock portfolio)
+- **Hosting/Deployment**: Docker for containerization, self-host LiveKit server หรือ LiveKit Cloud, AWS/GCP/DigitalOcean
 - **Other Libraries**: 
   - `google-api-python-client` for Google Calendar
-  - `websockets` for real-time communication
-  - `pydantic` for data validation
-  - `uvicorn` for ASGI server
+  - `pipecat-ai[livekit]`
+  - `livekit-plugins-turn-detector` (optional)
+  - `thaistock` (pip install thaistock) สำหรับ prototype
+  - `settrade` (official SDK สำหรับ Open API ถ้า production)
+  - `websockets`, `pydantic`, `uvicorn`
 
 ## System Architecture
 
 ### High-Level Architecture
+
 ```
-[Web Client] <---HTTP/WebSocket---> [FastAPI Server] <---API---> [External Services]
-                                      |
-                                      v
-                               [Pipecat Agent]
-                                      |
-                    +-----------------+-----------------+
-                    |                 |                 |
-               [ElevenLabs STT] [Grok API/Voice] [Google Calendar API]
+[Web Client (React + LiveKit JS SDK)] <---WebRTC (audio)---> [LiveKit Server (SFU)]
+                          |
+                          v
+            [FastAPI Server (control + auth)]
+                          |
+                          v
+                  [Pipecat Agent]
+                          |
++-------------------------+-------------------------+
+|                         |                         |
+[ElevenLabs/Deepgram STT + VAD] [Grok API]             [ElevenLabs TTS]
+|
++-------------------------+-------------------------+
+|                         |                         |
+[Google Calendar API]     [Stock Service: thaistock / Settrade Open API]     [News RSS + Grok Summarize]
+|
+v
+[(Database: portfolios + watchlists)]
 ```
 
-### Data Flow
-1. User speaks or types input in web client
-2. Audio/text sent to FastAPI server
-3. Server routes to Pipecat agent
-4. Agent uses ElevenLabs STT to convert speech to text (if voice)
-5. Text sent to Grok API for processing
-6. Grok returns response text
-7. Agent uses Grok Voice API or ElevenLabs TTS to generate voice response
-8. Response sent back to client
-9. For reminders: Agent makes API calls to Google Calendar
+### Data Flow (Stock Features)
+- User พูด "เช็คพอร์ตหุ้น" → Pipecat detect intent → call stock_service.get_portfolio(user_id)
+- User เพิ่ม watchlist → เก็บใน DB → periodic task (cron) เช็คข่าว → ถ้ามี match ส่ง notification หรือ voice alert
+- Interruptions ทำงานเหมือนเดิม (LiveKit VAD + Pipecat strategy)
 
-### Components
-- **Client Layer**: React app with microphone access, text input, audio playback
-- **API Layer**: FastAPI handles requests, authentication, WebSocket connections
-- **Agent Layer**: Pipecat manages conversation flow, state, and integrations
-- **Service Layer**: Wrappers for external APIs (ElevenLabs, Grok, Google Calendar)
-- **Data Layer**: Database for user sessions, cached data
+## Project Files and Structure (เพิ่ม stock)
+
+
 
 ## Project Files and Structure
 
@@ -127,34 +147,39 @@ digital-assistant/
 8. **Frontend Development (Week 8)**: Build React interface, integrate WebSocket for real-time updates, add voice controls.
 9. **Testing and Refinement (Week 9)**: Unit tests, integration tests, user testing, bug fixes.
 10. **Security and Deployment (Week 10)**: Implement security measures, deploy to cloud, monitor performance.
+11. **Stock Portfolio Prototype (Week 11)**: Integrate thaistock สำหรับ price checking + basic portfolio storage in DB
+12. **Stock News Alerts + Production (Week 12)**: Add Settrade Open API (broker login), watchlist, periodic news check + proactive alerts, test interruptions กับ stock queries
 
-## Security Considerations
+## Interruptions / Barge-in Handling
 
-1. **API Key Management**: Store API keys for ElevenLabs, Grok, Google in environment variables, never in code. Use secret management services in production.
-2. **Authentication and Authorization**: Implement OAuth 2.0 for user login. Ensure users can only access their own calendar data.
-3. **Data Encryption**: Encrypt sensitive data at rest and in transit. Use HTTPS for all communications.
-4. **Input Validation**: Validate all user inputs to prevent injection attacks. Sanitize text and audio data.
-5. **Rate Limiting**: Implement rate limiting on API endpoints to prevent abuse.
-6. **Privacy Protection**: Handle voice data carefully - process in memory, don't store audio files unless necessary. Comply with data protection regulations (GDPR, etc.).
-7. **Access Controls**: Use role-based access control if needed. Limit API permissions to minimum required.
-8. **Logging and Monitoring**: Log security events without exposing sensitive data. Monitor for unusual activity.
-9. **Dependency Security**: Regularly update dependencies, scan for vulnerabilities.
-10. **Backup and Recovery**: Implement data backups and disaster recovery plans.
+เหมือนเดิม: LiveKit hardware VAD + custom EOU + Pipecat allow_interruptions=True  
+(สำคัญสำหรับ stock queries ที่อาจยาว เช่น "สรุปข่าว PTT ล่าสุด")
 
-## Mermaid Diagram
+## Security Considerations (เพิ่ม financial)
+
+- **Financial Data**: Encrypt portfolio/watchlist ใน DB (ใช้ Fernet หรือ vault)
+- Broker OAuth: ใช้ Settrade Open API ด้วย minimal scope (read-only สำหรับ portfolio)
+- Consent: User ยินยอมชัดเจนก่อน link broker
+- No storage of sensitive broker credentials
+- Rate limiting + audit logs สำหรับ stock API calls
+
+## Mermaid Diagram 
 
 ```mermaid
 graph TD
-    A[User] --> B[Web Client]
-    B --> C[FastAPI Server]
-    C --> D[Pipecat Agent]
-    D --> E[ElevenLabs STT]
+    A[User] --> B[Web Client + LiveKit JS SDK]
+    B <--> C[LiveKit Server SFU WebRTC Audio]
+    C --> D[Pipecat Agent via LiveKitTransport]
+    D --> E[ElevenLabs/Deepgram STT + VAD/EOU]
     D --> F[Grok API]
-    D --> G[Grok Voice API / ElevenLabs TTS]
+    D --> G[ElevenLabs TTS]
     D --> H[Google Calendar API]
-    H --> I[(Database)]
-    C --> I
-    G --> B
+    D --> I[Stock Service: thaistock / Settrade API]
+    D --> J[News Service + Grok Summarize]
+    H --> K[(Database: users, calendars, portfolios, watchlists)]
+    I --> K
+    J --> K
+    G --> C
     F --> D
 ```</content>
 </xai:function_call name="update_todo_list">
