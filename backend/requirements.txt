@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pipecat-ai[livekit]
+deepgram-sdk
+elevenlabs
+loguru
+python-jose[cryptography]  # ถ้าใช้ JWT
