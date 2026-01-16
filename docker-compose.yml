@@ -1,29 +1,57 @@
 version: '3.8'
 
 services:
-  backend:
-    build: ./backend
-    ports:
-      - "8000:8000"
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml               # สำคัญสำหรับ WebRTC UDP ports              
     environment:
-      - DATABASE_URL=sqlite:///./digital_assistant.db
-    volumes:
-      - ./backend:/app
-    depends_on:
-      - db
-
-  frontend:
-    build: ./frontend
+      - REDIS_ADDRESS=redis:6379
     ports:
-      - "3000:3000"
+      - "17880:17880"     # WebSocket/HTTP API
+      - "17881:17881"     # TCP for signaling
+      - "50700-50720:50700-50720/udp" # UDP for media (WebRTC)                    # http (optional)            
     volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - ./livekit.yaml:/etc/livekit.yaml  # Mount LiveKit configuration
+    networks:
+      - livekit-network
+    depends_on:
+      - redis  # Redis required for LiveKit clustering/state
+  redis:
+    image: redis:alpine
+    restart: always
+    networks:
+      - livekit-network
+  # python-service:
+  #   build:
+  #     context: ./backend                # โฟลเดอร์ backend ของโปรเจกต์
+  #     dockerfile: Dockerfile
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - livekit
+  #     - redis
+  #   environment:
+  #     - LIVEKIT_URL=ws://localhost:7880 # หรือ wss:// ถ้า production
+  #     - LIVEKIT_API_KEY=devkey
+  #     - LIVEKIT_API_SECRET=secret
+  #     - LIVEKIT_ROOM_NAME=thai-assistant
+  #     - DEEPGRAM_API_KEY=your_key_here
+  #     - ELEVENLABS_API_KEY=your_key_here
+  #     - GROK_API_KEY=your_key_here
+  #   ports:
+  #     - "8000:8000"                     # FastAPI port
+  #   volumes:
+  #     - ./backend:/app                  # hot-reload สำหรับ dev
+  #   command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+  # frontend:
+  #   build: ./frontend
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - ./frontend:/app
+  #     - /app/node_modules
+  # Docker network for service communication
+networks:
+  livekit-network:
+    driver: bridge  # Default Docker bridge network
 
-  db:
-    image: sqlite3
-    volumes:
-      - db_data:/var/lib/sqlite
-
-volumes:
-  db_data:
